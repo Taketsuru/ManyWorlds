@@ -46,12 +46,12 @@ The build procedure of ManyWorlds is the same as that of typical forge MODs.
 Install
 -------
 
-* Copy manyworlds.zip to 'mods' directory of the forge server and **CLIENTS**.
+* Copy manyworlds.zip to 'mods' directory of the forge server and **clients**.
 
 Current status
 --------------
 
 * The default configuration file creates dimension 2 and 4 (overworld) and dimension 3 and 5 (nether).
-* Players can create a gate by creating 2x2 still water blocks framed by 12 obsidian blocks.  The gate is connected to dimension 2 when a player tosses a log wood by 'Q' key into the water blocks.  If a netherrack is tossed instead of a log wood, the gate will be connedted to dimension 3.
+* Players can create a gate by placing 2x2 still water blocks framed by 12 obsidian blocks.  The gate is connected to dimension 2 by tossing('Q' key) a log wood into the water blocks.  If a netherrack is tossed instead of a log wood, the gate will be connected to dimension 3.
 * Currently, both clients and server has to install the MOD.
 * There is a directory for Forge 7.7.1 servers but it's not completed yet.
