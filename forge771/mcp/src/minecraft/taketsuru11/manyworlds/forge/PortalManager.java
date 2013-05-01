@@ -1,17 +1,7 @@
 package taketsuru11.manyworlds.forge;
 
-import java.io.DataInputStream;
-import java.io.DataOutputStream;
-import java.io.EOFException;
-import java.io.File;
-import java.io.FileInputStream;
-import java.io.FileNotFoundException;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.Formatter;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
@@ -21,50 +11,63 @@ import java.util.Set;
 import java.util.TreeMap;
 import java.util.Vector;
 
-import cpw.mods.fml.common.FMLLog;
-
 import net.minecraft.block.Block;
-import net.minecraft.block.material.Material;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.util.ChunkCoordinates;
 import net.minecraft.util.MathHelper;
 import net.minecraft.util.Tuple;
-import net.minecraft.world.storage.SaveHandler;
 import net.minecraft.world.Teleporter;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldServer;
 import net.minecraftforge.common.DimensionManager;
-import net.minecraftforge.event.ForgeSubscribe;
-import net.minecraftforge.event.entity.item.ItemTossEvent;
-import net.minecraftforge.event.world.WorldEvent;
 
 public class PortalManager {
 
 	private final static int portalFrameSize = 4;
-	private final static int portalCoordinatesFudgeFactor = 4;
+	private final static int portalCoordinatesFudgeFactor = 8;
 	private final static int verticalSpace = 2;
 
 	class Portal {
 		WorldServer worldServer;
 		ChunkCoordinates northWestCorner;
+		int sourceDimension;
 		int targetDimension;
 
-		public Portal(WorldServer worldServer, ChunkCoordinates northWestCorner, int targetDimension) {
+		public Portal(WorldServer worldServer, ChunkCoordinates northWestCorner, int sourceDimension, int targetDimension) {
 			this.worldServer = worldServer;
 			this.northWestCorner = northWestCorner;
+			this.sourceDimension = sourceDimension;
 			this.targetDimension = targetDimension;
 		}
 
 		public void teleportPlayerTo(EntityPlayerMP player) {
-			ManyWorldsTeleporter.teleport(player, worldServer.provider.dimensionId,
+			ManyWorldsTeleporter.teleport(player, sourceDimension,
 					northWestCorner.posX + 0.5, northWestCorner.posY + 1, northWestCorner.posZ + 0.5,
 					player.rotationYaw, player.rotationPitch);
 		}
 	};
 
+	class EntityPosition {
+	
+		World world;
+		int x;
+		int y;
+		int z;
+
+		public EntityPosition(World world, int x, int y, int z) {
+			super();
+			this.world = world;
+			this.x = x;
+			this.y = y;
+			this.z = z;
+		}
+
+	};
+
 	private Map<WorldServer, Set<Portal>> portals = new HashMap<WorldServer, Set<Portal>>();
+	private Map<Entity, EntityPosition> lastPortalEntranceCheckPos = new HashMap<Entity, EntityPosition>();
 
 	/**
 	 * 
@@ -138,127 +141,18 @@ public class PortalManager {
 		return x.northWestCorner.getDistanceSquaredToChunkCoordinates(y.northWestCorner);	
 	}
 	
-	public static int getDimension(WorldServer world) {
-		Integer[] IDs = DimensionManager.getIDs();
-		for (int dimension : IDs) {
-			if (DimensionManager.getWorld(dimension) == world) {
-				return dimension;
-			}
-		}
-
-		throw new RuntimeException("unknown world");
-	}
-
-	@ForgeSubscribe
-	public void onWorldLoad(WorldEvent.Load event) {
-		if (event.world.isRemote) {
-			return;
-		}
-
-		WorldServer world = (WorldServer)event.world;
-
-		portals.remove(world);
-
-		File root = new File(world.getChunkSaveLocation(), "ManyWords");
-		if (! root.exists()) {
-			return;
-		}
-
-		File portalFile = new File(root, "portals");
-		if (! portalFile.exists()) {
-			return;
-		}
-
-		int dimension = getDimension(world);
-		Set<Portal> portalsInTheWorld = new HashSet<Portal>();
-		try {
-			DataInputStream stream = new DataInputStream(new FileInputStream(portalFile));
-			try {
-				for (;;) {
-					int x = stream.readInt();
-					int y = stream.readInt();
-					int z = stream.readInt();
-					int target = stream.readInt();
-					Portal portal = new Portal(world, new ChunkCoordinates(x, y, z), target);
-					if (isValidPortal(portal)) {
-						portalsInTheWorld.add(portal);
-						FMLLog.info("%d,%d,%d in dim%d -> dim%d", x, y, z, dimension, target);
-					}
-				}
-			} catch (EOFException eof) {
-			}
-			stream.close();
-		} catch (IOException ioe) {
-		}
-		
-		if (! portalsInTheWorld.isEmpty()) {
-			portals.put(world, portalsInTheWorld);
-		}
-	}
-
-	@ForgeSubscribe
-	public void onWorldSave(WorldEvent.Save event) {
-		if (event.world.isRemote) {
-			return;
-		}
-
-		WorldServer world = (WorldServer)event.world;
-
-		File root = new File(world.getChunkSaveLocation(), "ManyWords");
-		if (! root.exists() && ! root.mkdirs()) {
-			FMLLog.severe("Can't create %s", root.getAbsolutePath());
-			return;
-		}
-
-		Set<Portal> portalsInTheWorld = portals.get(world);
-
-		File portalFile = new File(root, "portals");
-
-		try {
-			if (portalsInTheWorld == null) {
-				portalFile.delete();
-			} else {
-				File portalTmpFile = new File(root, "portals.tmp");
-				portalTmpFile.delete();
-				portalTmpFile.createNewFile();
-
-				DataOutputStream stream = new DataOutputStream(new FileOutputStream(portalTmpFile));
-				for (Portal p : portalsInTheWorld) {
-					stream.writeInt(p.northWestCorner.posX);
-					stream.writeInt(p.northWestCorner.posY);
-					stream.writeInt(p.northWestCorner.posZ);
-					stream.writeInt(p.targetDimension);
-				}
-				stream.flush();
-				stream.close();
-				
-				portalFile.delete();
-				portalTmpFile.renameTo(portalFile);
-			}
-		} catch (IOException ioe) {
-		}
-	}
-
-	@ForgeSubscribe
-	public void onWorldUnload(WorldEvent.Unload event) {
-		if (event.world.isRemote) {
-			return;
-		}
-
-		WorldServer world = (WorldServer)event.world;
-
-		portals.remove(world);
-	}
-
 	public boolean doesPortalExistAt(WorldServer world, ChunkCoordinates portalCoordinates) {
 		Set<Portal> portalsInTheWorld = portals.get(world);
 		if (portalsInTheWorld == null) {
 			return false;
 		}
-		for (Portal p : portalsInTheWorld) {
-			if (p.northWestCorner.equals(portalCoordinates)
-				&& isValidPortal(p)) {
-				return true;
+		for (Iterator<Portal> i = portalsInTheWorld.iterator(); i.hasNext(); ) {
+			Portal p = i.next();
+			if (p.northWestCorner.equals(portalCoordinates)) {
+				if (isValidPortal(p)) {
+					return true;
+				}
+				i.remove();
 			}
 		}
 		return false;
@@ -273,7 +167,7 @@ public class PortalManager {
 			portals.put(world, portalsInTheWorld);
 		}
 
-		portalsInTheWorld.add(new Portal(world, portalCoordinates, targetDimension));
+		portalsInTheWorld.add(new Portal(world, portalCoordinates, sourceDimension, targetDimension));
 	}
 
 	public Portal getDestinationPortal(final Portal sourcePortal) {
@@ -285,19 +179,29 @@ public class PortalManager {
 
 		Set<Portal> portalsInTheWorld = portals.get(destinationWorld);
 		if (portalsInTheWorld == null) {
-			return buildPortal(destinationWorld, sourcePortal.northWestCorner, sourcePortal.targetDimension, sourceWorld.provider.dimensionId);
+			return buildPortal(destinationWorld, sourcePortal.northWestCorner, sourcePortal.targetDimension, sourcePortal.sourceDimension);
 		}
 
 		Vector<Portal> candidates = new Vector<Portal>();
-		for (Portal portal : portalsInTheWorld) {
-			if (isNearerThan(sourcePortal.northWestCorner, portal.northWestCorner, portalCoordinatesFudgeFactor)
-				&& isValidPortal(portal)) {
-				candidates.add(portal);
+		Vector<Portal> invalids = new Vector<Portal>();
+		Iterator<Portal> i = portalsInTheWorld.iterator();
+		while (i.hasNext()) {
+			Portal portal = i.next();
+			if (isNearerThan(sourcePortal.northWestCorner, portal.northWestCorner, portalCoordinatesFudgeFactor)) {
+				if (isValidPortal(portal)) {
+					candidates.add(portal);
+				} else {
+					invalids.add(portal);
+				}
 			}
+		}
+		portalsInTheWorld.removeAll(invalids);
+		if (portalsInTheWorld.isEmpty()) {
+			portals.remove(destinationWorld);
 		}
 
 		if (candidates.isEmpty()) {
-			return buildPortal(destinationWorld, sourcePortal.northWestCorner, sourcePortal.targetDimension, sourceWorld.provider.dimensionId);
+			return buildPortal(destinationWorld, sourcePortal.northWestCorner, sourcePortal.targetDimension, sourcePortal.sourceDimension);
 		}
 		
 		Collections.sort(candidates, new Comparator() {
@@ -314,6 +218,19 @@ public class PortalManager {
 		int y = MathHelper.floor_double(player.posY);
 		int z = MathHelper.floor_double(player.posZ);
 
+		EntityPosition lastCheck = lastPortalEntranceCheckPos.get(player);
+		if (lastCheck == null) {
+			lastPortalEntranceCheckPos.put(player, new EntityPosition(player.worldObj, x, y, z));
+		} else if (lastCheck.world == player.worldObj
+				&& lastCheck.x == x && lastCheck.y == y && lastCheck.z == z) {
+			return;
+		} else {
+			lastCheck.world = player.worldObj;
+			lastCheck.x = x;
+			lastCheck.y = y;
+			lastCheck.z = z;
+		}
+
 		WorldServer world = (WorldServer)player.worldObj;
 		ChunkCoordinates position = findPortalShape(world, x, y, z);
 		if (position == null) {
@@ -325,39 +242,26 @@ public class PortalManager {
 			return;
 		}
 
-		for (Portal p : portalsInTheWorld) {
-			if (! p.northWestCorner.equals(position)
-				|| ! isValidPortal(p)) {
-				continue;
-			}
-			
-			Portal destination = getDestinationPortal(p);
-			if (destination != null) {
-				destination.teleportPlayerTo(player);
-			}
+		Iterator<Portal> i = portalsInTheWorld.iterator();
+		while (i.hasNext()) {
+			Portal p = i.next();
+			if (p.northWestCorner.equals(position)) {
 
-			return;
-		}
-	}
-	
-	public void onPostWorldTick(WorldServer world) {
-		Set<Portal> portalsInTheWorld = portals.get(world);
-		if (portalsInTheWorld == null) {
-			return;
-		}
-
-		for (Portal p : portalsInTheWorld) {
-			for (int i = 1; i < portalFrameSize; ++i) {
-				for (int j = 1; j < portalFrameSize; ++j) {
-					if (world.getBlockId(p.northWestCorner.posX + i,
-							p.northWestCorner.posY,
-							p.northWestCorner.posZ + j) == Block.ice.blockID) {
-						world.setBlock(p.northWestCorner.posX + i,
-								p.northWestCorner.posY,
-								p.northWestCorner.posZ + j,
-								Block.waterStill.blockID);
+				if (isValidPortal(p)) {
+					Portal destination = getDestinationPortal(p);
+					if (destination != null) {
+						destination.teleportPlayerTo(player);
 					}
+					
+					return;
 				}
+
+				i.remove();
+				if (portalsInTheWorld.isEmpty()) {
+					portals.remove(world);
+				}
+
+				break;
 			}
 		}
 	}
@@ -419,7 +323,7 @@ public class PortalManager {
 
 		placePortalBlocks(world, x, y, z);
 
-		Portal result = new Portal(world, new ChunkCoordinates(x, y, z), targetDimension);
+		Portal result = new Portal(world, new ChunkCoordinates(x, y, z), sourceDimension, targetDimension);
 
 		Set<Portal> portalsInTheWorld = portals.get(world);
 		if (portalsInTheWorld == null) {
@@ -438,7 +342,7 @@ public class PortalManager {
 				boolean isEdge = i == 0 || i == portalFrameSize - 1 || j == 0 || j == portalFrameSize - 1;
 				world.setBlock(x + i, y, z + j, isEdge ? Block.obsidian.blockID : Block.waterStill.blockID);
 				if (! isEdge && ! world.getBlockMaterial(x + i, y - 1, z + j).isSolid()) {
-					world.setBlock(x + i, y - 1, z + j, Block.stone.blockID);
+					world.setBlock(x + i, y, z + j, Block.stone.blockID);
 				}
 				for (int k = 1; k <= verticalSpace; ++k) {
 					world.setBlock(x + i, y + k, z + j, 0);					
@@ -452,6 +356,22 @@ public class PortalManager {
 		return findPortalShape(portal.worldServer, pos.posX + 1, pos.posY, pos.posZ + 1) != null;
 	}
 
+	boolean validatePortal(Portal portal) {
+		if (isValidPortal(portal)) {
+			return true;
+		}
+
+		Set<Portal> portalsInTheWorld = portals.get(portal.worldServer);
+		if (portalsInTheWorld != null) {
+			portalsInTheWorld.remove(portal);
+			if (portalsInTheWorld.isEmpty()) {
+				portals.remove(portal.worldServer);
+			}
+		}
+
+		return false;
+	}
+
 	boolean isPortalPlaceable(World world, int x, int y, int z) {
 		if (y < 1 || world.getActualHeight() - verticalSpace <= y) {
 			return false;
@@ -459,8 +379,7 @@ public class PortalManager {
 
 		for (int i = 1; i < portalFrameSize - 1; ++i) {
 			for (int j = 1; j < portalFrameSize - 1; ++j) {
-				Material material = world.getBlockMaterial(x + i, y - 1, z + j);
-				if (! material.isSolid() || ! material.isOpaque()) {
+				if (! world.getBlockMaterial(x + i, y - 1, z + j).isSolid()) {
 					return false;
 				}
 			}
